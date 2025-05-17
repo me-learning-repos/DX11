@@ -212,6 +212,9 @@ void UpdateGame(float deltaTime, const Window& window)
 
 int main()
 {
+    Paingine2D::CrashHandler* crashHandler = Paingine2D::CrashHandler::GetInstance();
+    crashHandler->Initialize("DX11 Trumpet");
+
     Window window(1280, 720, "Trumpet");
     if (!window.Init())
     {
@@ -274,6 +277,8 @@ int main()
 
     // Cleanup
     CleanupDX11();
+
+    crashHandler->Shutdown();
 
     return 0;
 }
