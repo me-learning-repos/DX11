@@ -2,6 +2,7 @@
 #include "window.h"
 #include "Graphics/TextureRenderer.h"
 #include "InputHandler.h"
+#include "Utils/CrashHandler.h"
 
 // DX11 related global variables
 ComPtr<ID3D11Device> g_device;
