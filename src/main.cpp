@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "window.h"
 #include "Graphics/TextureRenderer.h"
+#include "InputHandler.h"
 
 // DX11 related global variables
 ComPtr<ID3D11Device> g_device;
@@ -8,6 +9,12 @@ ComPtr<ID3D11DeviceContext> g_deviceContext;
 ComPtr<IDXGISwapChain> g_swapChain;
 ComPtr<ID3D11RenderTargetView> g_renderTargetView;
 std::unique_ptr<TextureRenderer> g_textureRenderer;
+std::unique_ptr<InputHandler> g_inputHandler;
+
+// Game state variables
+glm::vec2 g_imagePosition = glm::vec2(0.0f, 0.0f);
+float g_imageSpeed = 300.0f; // Pixels per second
+std::chrono::steady_clock::time_point g_lastFrameTime;
 
 // Function to initialize DirectX 11
 bool InitializeDX11(const Window& window)
@@ -164,10 +171,48 @@ void HandleResize(int width, int height)
     g_deviceContext->RSSetViewports(1, &viewport);
 }
 
+// Update game state
+void UpdateGame(float deltaTime, const Window& window)
+{
+    // Get window dimensions for boundary checking
+    int windowWidth = window.GetWidth();
+    int windowHeight = window.GetHeight();
+    
+    // Handle input for image movement
+    if (g_inputHandler->IsKeyPressed(GLFW_KEY_UP))
+    {
+        g_imagePosition.y -= g_imageSpeed * deltaTime;
+    }
+    if (g_inputHandler->IsKeyPressed(GLFW_KEY_DOWN))
+    {
+        g_imagePosition.y += g_imageSpeed * deltaTime;
+    }
+    if (g_inputHandler->IsKeyPressed(GLFW_KEY_LEFT))
+    {
+        g_imagePosition.x -= g_imageSpeed * deltaTime;
+    }
+    if (g_inputHandler->IsKeyPressed(GLFW_KEY_RIGHT))
+    {
+        g_imagePosition.x += g_imageSpeed * deltaTime;
+    }
+
+    // Clamp the image position to keep it visible in the window
+    // Assuming image size is 256x256
+    const float imageHalfWidth = 128.0f;
+    const float imageHalfHeight = 128.0f;
+    
+    g_imagePosition.x = std::max(-windowWidth/2.0f + imageHalfWidth, 
+                        std::min(g_imagePosition.x, windowWidth/2.0f - imageHalfWidth));
+    g_imagePosition.y = std::max(-windowHeight/2.0f + imageHalfHeight, 
+                        std::min(g_imagePosition.y, windowHeight/2.0f - imageHalfHeight));
+    
+    // Update the texture renderer with new position
+    g_textureRenderer->SetPosition(g_imagePosition);
+}
+
 int main()
 {
-    // Create a window with 256x256 dimensions specifically for the image
-    Window window(256, 256, "Image Viewer - image.jpg");
+    Window window(1280, 720, "Trumpet");
     if (!window.Init())
     {
         std::cerr << "Failed to create window" << std::endl;
@@ -176,6 +221,9 @@ int main()
 
     // Set resize callback
     window.SetResizeCallback(HandleResize);
+
+    // Initialize input handler
+    g_inputHandler = std::make_unique<InputHandler>(window.GetGLFWWindow());
 
     // Initialize DirectX 11
     if (!InitializeDX11(window))
@@ -195,11 +243,22 @@ int main()
         std::wcout << L"DirectX 11 Device: " << adapterDesc.Description << std::endl;
     }
 
-    // Main loop
+    // Initialize timing variables
+    g_lastFrameTime = std::chrono::steady_clock::now();
+
+    // Main game loop
     while (!window.ShouldClose())
     {
+        // Measure frame time for smooth movement
+        auto currentTime = std::chrono::steady_clock::now();
+        float deltaTime = std::chrono::duration<float>(currentTime - g_lastFrameTime).count();
+        g_lastFrameTime = currentTime;
+
+        // Update game state
+        UpdateGame(deltaTime, window);
+
         // Clear the back buffer
-        float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f }; // Black background
+        float clearColor[4] = { 0.2f, 0.2f, 0.4f, 1.0f }; // Dark blue background
         g_deviceContext->ClearRenderTargetView(g_renderTargetView.Get(), clearColor);
 
         // Render the texture
@@ -210,6 +269,7 @@ int main()
 
         // Process events
         window.PollEvents();
+        g_inputHandler->Update();
     }
 
     // Cleanup

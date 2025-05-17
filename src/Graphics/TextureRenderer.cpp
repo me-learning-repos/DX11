@@ -8,8 +8,18 @@ struct Vertex {
     DirectX::XMFLOAT2 TexCoord;
 };
 
-// Shader code
+// Constant buffer structure
+struct ConstantBuffer {
+    DirectX::XMFLOAT4X4 TransformMatrix;
+};
+
+// Updated shader code to handle transformation
 const char* vertexShaderCode = R"(
+cbuffer ConstantBuffer : register(b0)
+{
+    matrix TransformMatrix;
+};
+
 struct VS_Input {
     float3 Position : POSITION;
     float2 TexCoord : TEXCOORD;
@@ -22,7 +32,7 @@ struct PS_Input {
 
 PS_Input main(VS_Input input) {
     PS_Input output;
-    output.Position = float4(input.Position, 1.0f);
+    output.Position = mul(float4(input.Position, 1.0f), TransformMatrix);
     output.TexCoord = input.TexCoord;
     return output;
 }
@@ -63,6 +73,12 @@ bool TextureRenderer::Init(ID3D11Device* device, ID3D11DeviceContext* context)
         return false;
     }
 
+    if (!CreateConstantBuffer())
+    {
+        std::cerr << "Failed to create constant buffer" << std::endl;
+        return false;
+    }
+
     if (!CreateSamplerState())
     {
         std::cerr << "Failed to create sampler state" << std::endl;
@@ -97,6 +113,9 @@ bool TextureRenderer::LoadTexture(const std::string& filename)
 
 void TextureRenderer::Render()
 {
+    // Update the vertex buffer with current position/size
+    UpdateVertexBuffer();
+
     // Set the input layout
     m_context->IASetInputLayout(m_inputLayout.Get());
 
@@ -111,6 +130,9 @@ void TextureRenderer::Render()
     // Set the shaders
     m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
     m_context->PSSetShader(m_pixelShader.Get(), nullptr, 0);
+
+    // Set the constant buffer
+    m_context->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
 
     // Set the texture and sampler state
     m_context->PSSetShaderResources(0, 1, m_textureView.GetAddressOf());
@@ -229,25 +251,25 @@ bool TextureRenderer::CreateShaders()
 
 bool TextureRenderer::CreateVertexBuffer()
 {
-    // Define the vertices for a quad that fills the screen
+    // Define the vertices for a quad centered at origin
     Vertex vertices[] = {
         // First triangle
-        { DirectX::XMFLOAT3(-1.0f, -1.0f, 0.0f), DirectX::XMFLOAT2(0.0f, 1.0f) },
-        { DirectX::XMFLOAT3(-1.0f,  1.0f, 0.0f), DirectX::XMFLOAT2(0.0f, 0.0f) },
-        { DirectX::XMFLOAT3( 1.0f,  1.0f, 0.0f), DirectX::XMFLOAT2(1.0f, 0.0f) },
+        { DirectX::XMFLOAT3(-0.5f, -0.5f, 0.0f), DirectX::XMFLOAT2(0.0f, 1.0f) },
+        { DirectX::XMFLOAT3(-0.5f,  0.5f, 0.0f), DirectX::XMFLOAT2(0.0f, 0.0f) },
+        { DirectX::XMFLOAT3( 0.5f,  0.5f, 0.0f), DirectX::XMFLOAT2(1.0f, 0.0f) },
         
         // Second triangle
-        { DirectX::XMFLOAT3(-1.0f, -1.0f, 0.0f), DirectX::XMFLOAT2(0.0f, 1.0f) },
-        { DirectX::XMFLOAT3( 1.0f,  1.0f, 0.0f), DirectX::XMFLOAT2(1.0f, 0.0f) },
-        { DirectX::XMFLOAT3( 1.0f, -1.0f, 0.0f), DirectX::XMFLOAT2(1.0f, 1.0f) }
+        { DirectX::XMFLOAT3(-0.5f, -0.5f, 0.0f), DirectX::XMFLOAT2(0.0f, 1.0f) },
+        { DirectX::XMFLOAT3( 0.5f,  0.5f, 0.0f), DirectX::XMFLOAT2(1.0f, 0.0f) },
+        { DirectX::XMFLOAT3( 0.5f, -0.5f, 0.0f), DirectX::XMFLOAT2(1.0f, 1.0f) }
     };
 
     // Create the vertex buffer
     D3D11_BUFFER_DESC bufferDesc = {};
-    bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    bufferDesc.Usage = D3D11_USAGE_DYNAMIC; // Changed to dynamic for updates
     bufferDesc.ByteWidth = sizeof(vertices);
     bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    bufferDesc.CPUAccessFlags = 0;
+    bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE; // Allow CPU write access
 
     D3D11_SUBRESOURCE_DATA initData = {};
     initData.pSysMem = vertices;
@@ -256,6 +278,25 @@ bool TextureRenderer::CreateVertexBuffer()
     if (FAILED(hr))
     {
         std::cerr << "Failed to create vertex buffer" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool TextureRenderer::CreateConstantBuffer()
+{
+    // Create the constant buffer
+    D3D11_BUFFER_DESC bufferDesc = {};
+    bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+    bufferDesc.ByteWidth = sizeof(ConstantBuffer);
+    bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+    HRESULT hr = m_device->CreateBuffer(&bufferDesc, nullptr, m_constantBuffer.GetAddressOf());
+    if (FAILED(hr))
+    {
+        std::cerr << "Failed to create constant buffer" << std::endl;
         return false;
     }
 
@@ -282,4 +323,49 @@ bool TextureRenderer::CreateSamplerState()
     }
 
     return true;
+}
+
+void TextureRenderer::UpdateVertexBuffer()
+{
+    // Map the constant buffer to update the transform matrix
+    D3D11_MAPPED_SUBRESOURCE mappedResource;
+    HRESULT hr = m_context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
+    if (SUCCEEDED(hr))
+    {
+        ConstantBuffer* dataPtr = static_cast<ConstantBuffer*>(mappedResource.pData);
+        
+        // Create a transformation matrix for the sprite
+        // Convert from screen space to clip space
+        DirectX::XMMATRIX transformMatrix = DirectX::XMMatrixIdentity();
+        
+        // Get information about the render target
+        D3D11_VIEWPORT viewport;
+        UINT numViewports = 1;
+        m_context->RSGetViewports(&numViewports, &viewport);
+        
+        float scaleX = m_size.x / viewport.Width * 2.0f;
+        float scaleY = m_size.y / viewport.Height * 2.0f;
+        
+        // Apply scaling
+        transformMatrix = DirectX::XMMatrixMultiply(
+            transformMatrix, 
+            DirectX::XMMatrixScaling(scaleX, scaleY, 1.0f)
+        );
+        
+        // Convert position from screen space to clip space
+        float posX = (m_position.x / viewport.Width) * 2.0f;
+        float posY = (m_position.y / viewport.Height) * 2.0f;
+        
+        // Apply translation
+        transformMatrix = DirectX::XMMatrixMultiply(
+            transformMatrix, 
+            DirectX::XMMatrixTranslation(posX, -posY, 0.0f)
+        );
+        
+        // Store the transformation matrix in the constant buffer
+        DirectX::XMStoreFloat4x4(&dataPtr->TransformMatrix, DirectX::XMMatrixTranspose(transformMatrix));
+        
+        // Unmap the constant buffer
+        m_context->Unmap(m_constantBuffer.Get(), 0);
+    }
 }
